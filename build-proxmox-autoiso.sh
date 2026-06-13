@@ -15,6 +15,35 @@ TARGET_DISK="${TARGET_DISK:-sda}"
 MAILTO="${MAILTO:-root@local}"
 SSH_KEY_FILE="${SSH_KEY_FILE:-$HOME/.ssh/id_ed25519.pub}"
 
+# ==================== CI / NON-INTERACTIVE MODE ====================
+if [ -n "${GITHUB_ACTIONS:-}" ]; then
+  echo "=== Running in GitHub Actions ==="
+  ROOT_PASSWORD="${ROOT_PASSWORD:-changeme123!}"
+  ROOT_HASH="$(openssl passwd -6 "$ROOT_PASSWORD")"
+  export ROOT_HASH
+  unset ROOT_PASSWORD
+  echo "✓ CI-Mode: Passwort-Hash gesetzt (Default: changeme123!)"
+else
+  # Interaktiver Modus (lokal)
+  create_password_hash() {
+    echo "=== Root-Passwort für Proxmox setzen ==="
+    while true; do
+      read -r -s -p "Passwort: " ROOT_PASS
+      echo
+      read -r -s -p "Passwort wiederholen: " ROOT_PASS2
+      echo
+      if [ "$ROOT_PASS" = "$ROOT_PASS2" ] && [ -n "$ROOT_PASS" ]; then
+        ROOT_HASH="$(openssl passwd -6 "$ROOT_PASS")"
+        export ROOT_HASH
+        unset ROOT_PASS ROOT_PASS2
+        echo "✓ Passwort gesetzt und gehasht."
+        return 0
+      fi
+      echo "❌ Passwörter stimmen nicht überein oder sind leer. Bitte erneut versuchen."
+    done
+  }
+fi
+
 need_root() {
   if [ "$(id -u)" -ne 0 ]; then
     echo "Dieses Script bitte mit sudo/root ausführen."
@@ -24,7 +53,7 @@ need_root() {
 
 install_deps() {
   apt-get update
-  apt-get install -y wget curl gpg openssl xorriso
+  apt-get install -y wget curl gpg openssl xorriso debootstrap squashfs-tools ca-certificates
 
   if ! command -v proxmox-auto-install-assistant >/dev/null 2>&1; then
     . /etc/os-release
@@ -41,7 +70,7 @@ install_deps() {
         | gpg --dearmor > /etc/apt/trusted.gpg.d/proxmox-release-bookworm.gpg
     else
       echo "Nicht unterstützte Basis: ${PRETTY_NAME:-unknown}"
-      echo "Nutze Debian 12/13 oder einen bestehenden Proxmox-Host."
+      echo "Nutze Debian 12 (bookworm) oder 13 (trixie)."
       exit 1
     fi
 
@@ -50,21 +79,17 @@ install_deps() {
   fi
 }
 
-create_password_hash() {
-  echo "Root-Passwort für Proxmox setzen:"
-  ROOT_HASH="$(openssl passwd -6)"
-  export ROOT_HASH
-}
-
 download_iso() {
   mkdir -p "$WORKDIR"
   cd "$WORKDIR"
 
   if [ ! -f "$ISO_NAME" ]; then
+    echo "Lade Proxmox ISO herunter..."
     wget -O "$ISO_NAME" "$ISO_URL"
   fi
 
   echo "${ISO_SHA256}  ${ISO_NAME}" | sha256sum -c -
+  echo "✓ ISO erfolgreich verifiziert."
 }
 
 create_answer() {
@@ -197,7 +222,9 @@ validate_and_build() {
 main() {
   need_root
   install_deps
-  create_password_hash
+  if [ -z "${ROOT_HASH:-}" ]; then
+    create_password_hash
+  fi
   download_iso
   create_answer
   create_firstboot
