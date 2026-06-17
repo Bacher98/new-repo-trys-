@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Proxmox 9.2 doesn't exist yet, 8.2-1 is the current stable
 PVE_VERSION="8.2-1"
 ISO_NAME="proxmox-ve_${PVE_VERSION}.iso"
 ISO_URL="https://download.proxmox.com/iso/${ISO_NAME}"
@@ -25,7 +26,7 @@ if [ -f /etc/os-release ]; then
         -e MAILTO="${MAILTO:-}" \
         -e GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" \
         debian:bookworm \
-        bash -c "apt-get update && apt-get install -y sudo && ./$(basename "$0") $@"
+        bash -c "apt-get update && apt-get install -y sudo && ./$(basename "$0") \"\$@\""
       exit 0
     fi
   fi
@@ -284,7 +285,7 @@ validate_and_build() {
   echo "$OUT_ISO"
   echo "=> Dieses ISO ist bootbar (isohybrid)."
   echo "=> Auf Fedora/Linux direkt auf USB schreiben mit:"
-  echo "=> sudo dd if=$OUT_ISO of=/dev/sdX bs=1M status=progress"
+  echo "=> sudo dd if=\"$OUT_ISO\" of=/dev/sdX bs=1M status=progress"
 }
 
 main() {
