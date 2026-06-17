@@ -257,8 +257,8 @@ fi
 if ! qm status 901 >/dev/null 2>&1; then
   echo "Creating basic Windows VM skeleton (ID: 901)..."
   qm create 901 --name "windows-vm" --memory 4096 --cores 4 --net0 virtio,bridge=vmbr0
-  qm set 901 --scsihw virtio-scsi-pci --ide2 local-lvm:vm-901-cloudinit,media=cdrom || true
-  qm set 901 --ide0 local:iso/virtio-win.iso,media=cdrom,size=500M || true
+  qm set 901 --scsihw virtio-scsi-pci || true
+  qm set 901 --ide0 local:iso/virtio-win.iso,media=cdrom || true
   qm set 901 --agent 1 || true
 fi
 
