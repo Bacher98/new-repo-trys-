@@ -1,10 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PVE_VERSION="9.2-1"
+PVE_VERSION="8.2-1"
 ISO_NAME="proxmox-ve_${PVE_VERSION}.iso"
 ISO_URL="https://download.proxmox.com/iso/${ISO_NAME}"
 ISO_SHA256="4e88fe416df9b527624a175f24c9aa07c714d3332afb1ee3dbf3879573ef2c6c"
+
+# ==================== FEDORA/DOCKER SUPPORT ====================
+if [ -f /etc/os-release ]; then
+  . /etc/os-release
+  if [ "$ID" = "fedora" ] || [ "$ID" = "centos" ] || [ "$ID" = "rhel" ]; then
+    if ! command -v apt-get >/dev/null 2>&1; then
+      echo "RedHat/Fedora based system detected. apt-get not found, using Docker/Podman..."
+      RUNTIME="docker"
+      if command -v podman >/dev/null 2>&1; then
+         RUNTIME="podman"
+      fi
+      $RUNTIME run --rm -it --privileged \
+        -v "$PWD":"$PWD" -w "$PWD" \
+        -e ROOT_PASSWORD="${ROOT_PASSWORD:-}" \
+        -e ROOT_HASH="${ROOT_HASH:-}" \
+        -e FQDN="${FQDN:-}" \
+        -e TARGET_DISK="${TARGET_DISK:-}" \
+        -e MAILTO="${MAILTO:-}" \
+        -e GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" \
+        debian:bookworm \
+        bash -c "apt-get update && apt-get install -y sudo && ./$(basename "$0") $@"
+      exit 0
+    fi
+  fi
+fi
 
 WORKDIR="${PWD}/pve-auto-build"
 OUT_ISO="${WORKDIR}/proxmox-ve-${PVE_VERSION}-dell5810-auto.iso"
@@ -152,11 +177,20 @@ apt-get update
 apt-get install -y \
   curl git htop iftop iotop smartmontools lm-sensors \
   vim nano sudo pciutils usbutils lshw ethtool \
-  prometheus-node-exporter
+  prometheus-node-exporter libguestfs-tools
 
 echo "[+] Enable useful services"
 systemctl enable --now prometheus-node-exporter
 systemctl enable --now fstrim.timer || true
+
+echo "[+] Configure auto-login for root"
+mkdir -p /etc/systemd/system/getty@tty1.service.d
+cat > /etc/systemd/system/getty@tty1.service.d/override.conf <<EOF
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin root --noclear %I \$TERM
+EOF
+systemctl daemon-reload || true
 
 echo "[+] IOMMU/VFIO base prep for future GPU passthrough"
 if grep -qi intel /proc/cpuinfo; then
@@ -197,6 +231,37 @@ EOF
 
 sysctl --system || true
 
+echo "[+] Pre-configure Linux and Windows VMs"
+# Download a cloud-init image for Linux VM
+if [ ! -f /var/lib/vz/template/iso/ubuntu-22.04-server-cloudimg-amd64.img ]; then
+  echo "Downloading Ubuntu Cloud image..."
+  curl -L -o /var/lib/vz/template/iso/ubuntu-22.04-server-cloudimg-amd64.img https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.disk1.img || true
+fi
+
+if ! qm status 900 >/dev/null 2>&1; then
+  echo "Creating Linux VM Template (ID: 900)..."
+  qm create 900 --name "linux-template" --memory 2048 --cores 2 --net0 virtio,bridge=vmbr0
+  qm importdisk 900 /var/lib/vz/template/iso/ubuntu-22.04-server-cloudimg-amd64.img local-lvm || true
+  qm set 900 --scsihw virtio-scsi-pci --scsi0 local-lvm:vm-900-disk-0 || true
+  qm set 900 --ide2 local-lvm:cloudinit || true
+  qm set 900 --boot c --bootdisk scsi0 || true
+  qm set 900 --serial0 socket --vga serial0 || true
+  qm template 900 || true
+fi
+
+if [ ! -f /var/lib/vz/template/iso/virtio-win.iso ]; then
+  echo "Downloading VirtIO Windows drivers..."
+  curl -L -o /var/lib/vz/template/iso/virtio-win.iso https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-virtio/virtio-win.iso || true
+fi
+
+if ! qm status 901 >/dev/null 2>&1; then
+  echo "Creating basic Windows VM skeleton (ID: 901)..."
+  qm create 901 --name "windows-vm" --memory 4096 --cores 4 --net0 virtio,bridge=vmbr0
+  qm set 901 --scsihw virtio-scsi-pci --ide2 local-lvm:vm-901-cloudinit,media=cdrom || true
+  qm set 901 --ide0 local:iso/virtio-win.iso,media=cdrom,size=500M || true
+  qm set 901 --agent 1 || true
+fi
+
 echo "[+] First boot bootstrap finished"
 echo "Reboot empfohlen für IOMMU/Kernel-Parameter."
 SCRIPT
@@ -217,6 +282,9 @@ validate_and_build() {
   echo
   echo "Fertig:"
   echo "$OUT_ISO"
+  echo "=> Dieses ISO ist bootbar (isohybrid)."
+  echo "=> Auf Fedora/Linux direkt auf USB schreiben mit:"
+  echo "=> sudo dd if=$OUT_ISO of=/dev/sdX bs=1M status=progress"
 }
 
 main() {
