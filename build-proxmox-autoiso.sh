@@ -26,7 +26,7 @@ if [ -f /etc/os-release ]; then
         -e MAILTO="${MAILTO:-}" \
         -e GITHUB_ACTIONS="${GITHUB_ACTIONS:-}" \
         debian:bookworm \
-        bash -c "apt-get update && apt-get install -y sudo && ./$(basename "$0") \"\$@\""
+        bash -c "apt-get update && apt-get install -y --no-install-recommends sudo && ./$(basename "$0") \"\$@\""
       exit 0
     fi
   fi
@@ -79,7 +79,7 @@ need_root() {
 
 install_deps() {
   apt-get update
-  apt-get install -y wget curl gpg openssl xorriso debootstrap squashfs-tools ca-certificates
+  apt-get install -y --no-install-recommends wget curl gpg openssl xorriso debootstrap squashfs-tools ca-certificates
 
   if ! command -v proxmox-auto-install-assistant >/dev/null 2>&1; then
     . /etc/os-release
@@ -101,7 +101,7 @@ install_deps() {
     fi
 
     apt-get update
-    apt-get install -y proxmox-auto-install-assistant
+    apt-get install -y --no-install-recommends proxmox-auto-install-assistant
   fi
 }
 
@@ -175,7 +175,7 @@ EOF
 
 echo "[+] Base packages"
 apt-get update
-apt-get install -y \
+apt-get install -y --no-install-recommends \
   curl git htop iftop iotop smartmontools lm-sensors \
   vim nano sudo pciutils usbutils lshw ethtool \
   prometheus-node-exporter libguestfs-tools
